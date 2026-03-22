@@ -43,7 +43,16 @@ canvas { display: block; width: 100vw; height: 100vh; }
 </head>
 <body>
 
-<div id="startScreen" class="screen">
+<div id="loadingScreen" class="screen">
+  <h1>🦞 龙虾觉醒</h1>
+  <p style="margin-top:20px; color:#00ff88; font-size:16px;">正在唤醒深海生物...</p>
+  <div style="margin-top:20px; width:200px; height:6px; background:#1a1a4e; border-radius:3px; overflow:hidden;">
+    <div id="loadBar" style="width:0%; height:100%; background:linear-gradient(90deg,#00ff88,#00cc6a); border-radius:3px; transition:width 0.3s;"></div>
+  </div>
+  <p id="loadText" style="margin-top:10px; color:#666; font-size:12px;">0%</p>
+</div>
+
+<div id="startScreen" class="screen hidden">
   <h1>🦞 龙虾觉醒</h1>
   <p>深海逃生</p>
   <p style="margin-top:24px; color:#00ff88; font-size:16px;">点一下屏幕就跳</p>
@@ -121,6 +130,20 @@ setTimeout(() => {
   if (!assets.shark_f1) loadNet('shark_f1', 'shark.png');
   if (!assets.shark_f2) loadNet('shark_f2', 'shark.png');
 }, 2000);
+
+// 加载进度检查
+function checkLoading() {
+  const pct = Math.min(100, Math.round(assetsReady / totalAssets * 100));
+  document.getElementById('loadBar').style.width = pct + '%';
+  document.getElementById('loadText').textContent = pct + '%';
+  if (assetsReady >= totalAssets) {
+    document.getElementById('loadingScreen').classList.add('hidden');
+    document.getElementById('startScreen').classList.remove('hidden');
+  } else {
+    requestAnimationFrame(checkLoading);
+  }
+}
+checkLoading();
 
 // State
 let running = false, score = 0, speed = 3, frame = 0;
