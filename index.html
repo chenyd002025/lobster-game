@@ -84,12 +84,17 @@ let totalAssets = 6; // lobster_f1, lobster_f2, shark_f1, shark_f2, scroll, back
 
 function loadAsset(name, file) {
   const img = new Image();
-  img.onload = () => { assets[name] = img; assetsReady++; console.log('Loaded: ' + name); };
-  img.onerror = () => {
-    console.log('Failed: ' + name + ', retry in 1s');
-    setTimeout(() => { const retry = new Image(); retry.onload = () => { assets[name] = retry; assetsReady++; }; retry.src = file + '?t=' + Date.now(); }, 1000);
+  img.onload = () => { assets[name] = img; assetsReady++; console.log(`Loaded ${name}`); };
+  img.onerror = () => { 
+    // 如果动画帧不存在，回退到静态图
+    if (name.includes('_f')) {
+      const base = name.split('_f')[0];
+      assets[name] = assets[base] || null;
+      assetsReady++;
+      console.log(`Fallback ${name} -> ${base}`);
+    }
   };
-  img.src = file + '?v=1';
+  img.src = file;
 }
 
 // 优先加载动画帧，如果没有就用静态图
@@ -100,15 +105,13 @@ loadAsset('shark_f2', 'shark_f2.png');
 loadAsset('scroll', 'scroll.png');
 loadAsset('background', 'background.png');
 
-// 兜底：确保所有动画帧都有图可用
+// 兜底：如果动画帧加载失败，用静态图
 setTimeout(() => {
-  if (!assets.lobster_f1) assets.lobster_f1 = assets.lobster || null;
-  if (!assets.lobster_f2) assets.lobster_f2 = assets.lobster || null;
-  if (!assets.shark_f1) assets.shark_f1 = assets.shark || null;
-  if (!assets.shark_f2) assets.shark_f2 = assets.shark || null;
-  if (assetsReady < totalAssets) assetsReady = totalAssets;
-  console.log('Assets ready: ' + assetsReady + '/' + totalAssets);
-}, 5000);
+  if (!assets.lobster_f1) loadAsset('lobster_f1', 'lobster.png');
+  if (!assets.lobster_f2) loadAsset('lobster_f2', 'lobster.png');
+  if (!assets.shark_f1) loadAsset('shark_f1', 'shark.png');
+  if (!assets.shark_f2) loadAsset('shark_f2', 'shark.png');
+}, 2000);
 
 // State
 let running = false, score = 0, speed = 3, frame = 0;
@@ -229,9 +232,38 @@ function boom(x,y,col,n) {
 function drawBg() {
   if (assets.background) {
     const bg = assets.background;
-    // 拉伸填满整个屏幕
-    ctx.drawImage(bg, 0, 0, W(), H());
-    if (golden) { ctx.fillStyle='rgba(255,200,0,0.06)'; ctx.fillRect(0,0,W(),H()); }
+    const scale = H() / bg.height;
+    const w = Math.ceil(bg.width * scale);
+    const off = bgOff % w;
+
+    ctx.save();
+    // 绘制三份，中间那份用于无缝衔接
+    for (let i = -1; i <= 2; i++) {
+      const x = off + i * w;
+      ctx.drawImage(bg, x, 0, w, H());
+    }
+
+    // 在拼接处添加渐变遮罩，让首尾自然融合
+    const seam = ((off % w) + w) % w; // 实际拼接位置
+    if (seam < w * 0.15 || seam > w * 0.85) {
+      // 在拼接区域添加半透明渐变，软化边界
+      const gradW = 60;
+      for (let i = -1; i <= 2; i++) {
+        const x = off + i * w;
+        const grad = ctx.createLinearGradient(x, 0, x + gradW, 0);
+        grad.addColorStop(0, 'rgba(10, 10, 46, 0.3)');
+        grad.addColorStop(1, 'rgba(10, 10, 46, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x, 0, gradW, H());
+
+        const gradR = ctx.createLinearGradient(x + w - gradW, 0, x + w, 0);
+        gradR.addColorStop(0, 'rgba(10, 10, 46, 0)');
+        gradR.addColorStop(1, 'rgba(10, 10, 46, 0.3)');
+        ctx.fillStyle = gradR;
+        ctx.fillRect(x + w - gradW, 0, gradW, H());
+      }
+    }
+    ctx.restore();
   } else {
     const g = ctx.createLinearGradient(0,0,0,H());
     g.addColorStop(0,'#0a0a2e'); g.addColorStop(0.5,'#0d1b3e'); g.addColorStop(1,'#0a0a2e');
