@@ -43,12 +43,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
 </head>
 <body>
 
-<div id="loadingScreen" class="screen">
-  <h1>🦞 龙虾觉醒</h1>
-  <p style="margin-top:20px; color:#00ff88; font-size:16px;">正在唤醒深海生物...</p>
-</div>
-
-<div id="startScreen" class="screen hidden">
+<div id="startScreen" class="screen">
   <h1>🦞 龙虾觉醒</h1>
   <p>深海逃生</p>
   <p style="margin-top:24px; color:#00ff88; font-size:16px;">点一下屏幕就跳</p>
@@ -117,17 +112,6 @@ setTimeout(() => {
   if (!assets.shark_f1) loadAsset('shark_f1', 'shark.png');
   if (!assets.shark_f2) loadAsset('shark_f2', 'shark.png');
 }, 2000);
-
-// 等素材加载完再显示开始界面
-function showStartScreen() {
-  document.getElementById('loadingScreen').classList.add('hidden');
-  document.getElementById('startScreen').classList.remove('hidden');
-}
-// 检查加载状态，最多等 5 秒
-let loadTimer = setInterval(() => {
-  if (assetsReady >= totalAssets) { clearInterval(loadTimer); showStartScreen(); }
-}, 200);
-setTimeout(() => { clearInterval(loadTimer); showStartScreen(); }, 5000);
 
 // State
 let running = false, score = 0, speed = 3, frame = 0;
