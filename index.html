@@ -61,6 +61,7 @@ canvas { display: block; width: 100vw; height: 100vh; }
 <div id="score">得分: 0</div>
 <div id="hint">点一下 = 跳跃 🎵 自带音效</div>
 <canvas id="canvas"></canvas>
+<script src="assets.js"></script>
 
 <script>
 const canvas = document.getElementById('canvas');
@@ -82,35 +83,43 @@ const assets = {};
 let assetsReady = 0;
 let totalAssets = 6; // lobster_f1, lobster_f2, shark_f1, shark_f2, scroll, background
 
-function loadAsset(name, file) {
+// 内嵌素材优先，网络加载兜底
+function loadInline(name, key) {
+  if (window.INLINE_ASSETS && INLINE_ASSETS[key]) {
+    const img = new Image();
+    img.onload = () => { assets[name] = img; assetsReady++; console.log('Inline: ' + name); };
+    img.onerror = () => { loadNet(name, key + '.png'); };
+    img.src = INLINE_ASSETS[key];
+  } else {
+    loadNet(name, key + '.png');
+  }
+}
+function loadNet(name, file) {
   const img = new Image();
-  img.onload = () => { assets[name] = img; assetsReady++; console.log(`Loaded ${name}`); };
-  img.onerror = () => { 
-    // 如果动画帧不存在，回退到静态图
+  img.onload = () => { assets[name] = img; assetsReady++; console.log('Net: ' + name); };
+  img.onerror = () => {
     if (name.includes('_f')) {
       const base = name.split('_f')[0];
       assets[name] = assets[base] || null;
       assetsReady++;
-      console.log(`Fallback ${name} -> ${base}`);
     }
   };
   img.src = file;
 }
 
-// 优先加载动画帧，如果没有就用静态图
-loadAsset('lobster_f1', 'lobster_f1.png');
-loadAsset('lobster_f2', 'lobster_f2.png');
-loadAsset('shark_f1', 'shark_f1.png');
-loadAsset('shark_f2', 'shark_f2.png');
-loadAsset('scroll', 'scroll.png');
-loadAsset('background', 'background.png');
+loadInline('lobster_f1', 'lobster_f1');
+loadInline('lobster_f2', 'lobster_f2');
+loadInline('shark_f1', 'shark_f1');
+loadInline('shark_f2', 'shark_f2');
+loadInline('scroll', 'scroll');
+loadNet('background', 'background.png');
 
 // 兜底：如果动画帧加载失败，用静态图
 setTimeout(() => {
-  if (!assets.lobster_f1) loadAsset('lobster_f1', 'lobster.png');
-  if (!assets.lobster_f2) loadAsset('lobster_f2', 'lobster.png');
-  if (!assets.shark_f1) loadAsset('shark_f1', 'shark.png');
-  if (!assets.shark_f2) loadAsset('shark_f2', 'shark.png');
+  if (!assets.lobster_f1) loadNet('lobster_f1', 'lobster.png');
+  if (!assets.lobster_f2) loadNet('lobster_f2', 'lobster.png');
+  if (!assets.shark_f1) loadNet('shark_f1', 'shark.png');
+  if (!assets.shark_f2) loadNet('shark_f2', 'shark.png');
 }, 2000);
 
 // State
