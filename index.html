@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+<title>🦞 龙虾觉醒</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a2e; touch-action: none; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+canvas { display: block; width: 100vw; height: 100vh; }
+
+/* UI overlay */
+.ui { position: fixed; z-index: 10; pointer-events: none; }
+#score { position: fixed; top: 12px; left: 16px; color: #00ff88; font-size: 20px; font-weight: bold; z-index: 10; text-shadow: 0 2px 6px rgba(0,0,0,0.6); }
+#hint { position: fixed; bottom: 20px; left: 0; right: 0; text-align: center; color: rgba(255,255,255,0.25); font-size: 13px; z-index: 10; }
+
+/* Screens */
+.screen {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  background: rgba(8, 8, 40, 0.96);
+  z-index: 50;
+}
+.screen h1 { color: #00ff88; font-size: 30px; margin-bottom: 10px; text-shadow: 0 0 30px #00ff88; }
+.screen p { color: #999; font-size: 14px; margin: 4px 0; text-align: center; padding: 0 40px; }
+.screen .score { color: #ffcc00; font-size: 20px; margin: 12px 0 4px; }
+.screen .level { color: #00ff88; font-size: 16px; margin: 4px 0 0; }
+.btn {
+  margin-top: 28px;
+  padding: 14px 48px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #0a0a2e;
+  background: linear-gradient(135deg, #00ff88, #00cc6a);
+  border: none; border-radius: 24px;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(0,255,136,0.35);
+}
+.btn:active { transform: scale(0.95); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="startScreen" class="screen">
+  <h1>🦞 龙虾觉醒</h1>
+  <p>深海逃生</p>
+  <p style="margin-top:24px; color:#00ff88; font-size:16px;">点一下屏幕就跳</p>
+  <p>触底自动下潜</p>
+  <button class="btn" onclick="startGame()">开始觉醒</button>
+</div>
+
+<div id="gameOverScreen" class="screen hidden">
+  <h1>💀 觉醒失败</h1>
+  <p class="score" id="finalScore"></p>
+  <p class="level" id="awakenLevel"></p>
+  <button class="btn" onclick="startGame()">再试一次</button>
+</div>
+
+<div id="score">得分: 0</div>
+<div id="hint">点一下 = 跳跃 🎵 自带音效</div>
+<canvas id="canvas"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+}
+resize();
+window.addEventListener('resize', resize);
+
+const W = () => window.innerWidth;
+const H = () => window.innerHeight;
+
+// Assets
+const assets = {};
+let assetsReady = 0;
+let totalAssets = 6; // lobster_f1, lobster_f2, shark_f1, shark_f2, scroll, background
+
+function loadAsset(name, file) {
+  const img = new Image();
+  img.onload = () => { assets[name] = img; assetsReady++; console.log(`Loaded ${name}`); };
+  img.onerror = () => { 
+    // 如果动画帧不存在，回退到静态图
+    if (name.includes('_f')) {
+      const base = name.split('_f')[0];
+      assets[name] = assets[base] || null;
+      assetsReady++;
+      console.log(`Fallback ${name} -> ${base}`);
+    }
+  };
+  img.src = file;
+}
+
+// 优先加载动画帧，如果没有就用静态图
+loadAsset('lobster_f1', 'lobster_f1.png');
+loadAsset('lobster_f2', 'lobster_f2.png');
+loadAsset('shark_f1', 'shark_f1.png');
+loadAsset('shark_f2', 'shark_f2.png');
+loadAsset('scroll', 'scroll.png');
+loadAsset('background', 'background.png');
+
+// 兜底：如果动画帧加载失败，用静态图
+setTimeout(() => {
+  if (!assets.lobster_f1) loadAsset('lobster_f1', 'lobster.png');
+  if (!assets.lobster_f2) loadAsset('lobster_f2', 'lobster.png');
+  if (!assets.shark_f1) loadAsset('shark_f1', 'shark.png');
+  if (!assets.shark_f2) loadAsset('shark_f2', 'shark.png');
+}, 2000);
+
+// State
+let running = false, score = 0, speed = 3, frame = 0;
+let lobster, obstacles, scrolls, particles, bgOff, golden, goldenT;
+let highScore = +(localStorage.getItem('hs') || 0);
+
+// Lobster
+function newLobster() {
+  return { x: W()*0.18, y: H()*0.5, vy: 0, w: 70, h: 56, alive: true, angle: 0 };
+}
+function updateLobster() {
+  lobster.vy += 0.45;
+  lobster.y += lobster.vy;
+  if (lobster.y < 50) { lobster.y = 50; lobster.vy = 0; }
+  if (lobster.y > H()-60) { lobster.y = H()-60; lobster.vy = 0; }
+  lobster.angle = Math.max(-25, Math.min(25, lobster.vy*3));
+}
+function drawLobster() {
+  ctx.save();
+  ctx.translate(lobster.x, lobster.y);
+  ctx.rotate(lobster.angle * Math.PI/180);
+  const s = golden ? 60 : 50;
+  const frameNum = Math.floor(frame / 8) % 2; // 每8帧切换一帧
+  const img = frameNum === 0 ? assets.lobster_f1 : assets.lobster_f2;
+  if (img) {
+    ctx.drawImage(img, -s/2, -s/2, s, s);
+    if (golden) {
+      ctx.globalAlpha = 0.35 + Math.sin(frame*0.2)*0.2;
+      ctx.shadowColor = '#ffcc00'; ctx.shadowBlur = 25;
+      ctx.drawImage(img, -s/2, -s/2, s, s);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    }
+  } else {
+    ctx.fillStyle = golden ? '#ffcc00' : '#ff6644';
+    ctx.beginPath(); ctx.arc(0,0,s/2,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+function doJump() {
+  if (!running || !lobster.alive) return;
+  lobster.vy = -10;
+  sfxJump();
+}
+
+// Obstacle
+function spawnObs() {
+  const interval = Math.max(30, 80 - score/500);
+  if (frame % Math.floor(interval) === 0) {
+    obstacles.push({
+      x: W()+60, y: 60+Math.random()*(H()-180),
+      w: 80+Math.random()*30, h: 50+Math.random()*20,
+      spd: speed+Math.random()*2, bob: Math.random()*6.28,
+      type: Math.random()>0.3 ? 'shark':'rock', frame: 0
+    });
+  }
+}
+function drawObs(o) {
+  if (o.type==='shark') {
+    const b = Math.sin(o.frame*0.1)*5;
+    const frameNum = Math.floor(o.frame / 8) % 2;
+    const img = frameNum === 0 ? assets.shark_f1 : assets.shark_f2;
+    if (img) {
+      ctx.drawImage(img, o.x, o.y+b, o.w, o.h);
+    } else {
+      ctx.fillStyle = '#667788';
+      ctx.beginPath(); ctx.roundRect(o.x,o.y+b,o.w,o.h,6); ctx.fill();
+    }
+  } else {
+    ctx.fillStyle = '#664433';
+    ctx.beginPath(); ctx.roundRect(o.x,o.y,o.w,o.h,6); ctx.fill();
+  }
+}
+function hitObs(o) {
+  const m=12;
+  return lobster.x-lobster.w/2+m < o.x+o.w && lobster.x+lobster.w/2-m > o.x &&
+         lobster.y-lobster.h/2+m < o.y+o.h && lobster.y+lobster.h/2-m > o.y;
+}
+
+// Scroll
+function spawnScroll() {
+  if (frame % 95 === 0) {
+    scrolls.push({
+      x: W()+30, y: 80+Math.random()*(H()-220),
+      w:30, h:34, spd: speed, bob: Math.random()*6.28, got: false
+    });
+  }
+}
+function drawScroll(s) {
+  if (s.got) return;
+  const b = Math.sin(frame*0.08+s.bob)*6;
+  if (assets.scroll) {
+    ctx.save();
+    ctx.globalAlpha = 0.3+Math.sin(frame*0.1+s.bob)*0.15;
+    ctx.shadowColor='#ffcc00'; ctx.shadowBlur=15;
+    ctx.drawImage(assets.scroll, s.x-4, s.y+b-4, s.w+8, s.h+8);
+    ctx.shadowBlur=0; ctx.globalAlpha=1;
+    ctx.drawImage(assets.scroll, s.x, s.y+b, s.w, s.h);
+    ctx.restore();
+  } else {
+    ctx.fillStyle='#ffcc00';
+    ctx.beginPath(); ctx.roundRect(s.x,s.y+b,s.w,s.h,4); ctx.fill();
+  }
+}
+function hitScroll(s) {
+  return lobster.x-lobster.w/2 < s.x+s.w && lobster.x+lobster.w/2 > s.x &&
+         lobster.y-lobster.h/2 < s.y+s.h && lobster.y+lobster.h/2 > s.y;
+}
+
+// Particle
+function boom(x,y,col,n) {
+  for(let i=0;i<n;i++) particles.push({
+    x, y, vx:(Math.random()-0.5)*8, vy:(Math.random()-0.5)*8,
+    life:25+Math.random()*20, color:col, size:3+Math.random()*6
+  });
+}
+
+// Background
+function drawBg() {
+  if (assets.background) {
+    const bg = assets.background;
+    const scale = H() / bg.height;
+    const w = Math.ceil(bg.width * scale);
+    const off = bgOff % w;
+
+    ctx.save();
+    // 绘制三份，中间那份用于无缝衔接
+    for (let i = -1; i <= 2; i++) {
+      const x = off + i * w;
+      ctx.drawImage(bg, x, 0, w, H());
+    }
+
+    // 在拼接处添加渐变遮罩，让首尾自然融合
+    const seam = ((off % w) + w) % w; // 实际拼接位置
+    if (seam < w * 0.15 || seam > w * 0.85) {
+      // 在拼接区域添加半透明渐变，软化边界
+      const gradW = 60;
+      for (let i = -1; i <= 2; i++) {
+        const x = off + i * w;
+        const grad = ctx.createLinearGradient(x, 0, x + gradW, 0);
+        grad.addColorStop(0, 'rgba(10, 10, 46, 0.3)');
+        grad.addColorStop(1, 'rgba(10, 10, 46, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x, 0, gradW, H());
+
+        const gradR = ctx.createLinearGradient(x + w - gradW, 0, x + w, 0);
+        gradR.addColorStop(0, 'rgba(10, 10, 46, 0)');
+        gradR.addColorStop(1, 'rgba(10, 10, 46, 0.3)');
+        ctx.fillStyle = gradR;
+        ctx.fillRect(x + w - gradW, 0, gradW, H());
+      }
+    }
+    ctx.restore();
+  } else {
+    const g = ctx.createLinearGradient(0,0,0,H());
+    g.addColorStop(0,'#0a0a2e'); g.addColorStop(0.5,'#0d1b3e'); g.addColorStop(1,'#0a0a2e');
+    ctx.fillStyle=g; ctx.fillRect(0,0,W(),H());
+  }
+  if (golden) { ctx.fillStyle='rgba(255,200,0,0.06)'; ctx.fillRect(0,0,W(),H()); }
+  // bubbles
+  ctx.fillStyle = golden ? 'rgba(255,200,0,0.1)' : 'rgba(100,200,255,0.06)';
+  for(let i=0;i<8;i++){
+    const bx=(i*55+bgOff*0.4)%W(), by=(H()-((frame*1.2+i*90)%(H()+40)));
+    ctx.beginPath(); ctx.arc(bx,by,3+Math.sin(i*1.7)*2,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// Loop
+function loop() {
+  if (!running) return;
+  const w=W(), h=H();
+  frame++;
+  bgOff -= speed*0.8;
+  speed = 3 + score/500;
+  if (goldenT>0) { goldenT--; if(!goldenT) golden=false; }
+  if (frame%10===0) score++;
+
+  updateLobster();
+  obstacles.forEach(o=>{ o.x-=o.spd; o.frame++; });
+  scrolls.forEach(s=>{ s.x-=s.spd; });
+  particles.forEach(p=>{ p.x+=p.vx; p.y+=p.vy; p.life--; p.size*=0.96; });
+
+  obstacles = obstacles.filter(o=>o.x>-80);
+  scrolls = scrolls.filter(s=>s.x>-40);
+  particles = particles.filter(p=>p.life>0);
+
+  spawnObs();
+  spawnScroll();
+
+  // collisions
+  for (const o of obstacles) {
+    if (hitObs(o)) { boom(lobster.x,lobster.y,'#ff6644',30); sfxDie(); doGameOver(); return; }
+  }
+  for (const s of scrolls) {
+    if (!s.got && hitScroll(s)) {
+      s.got=true; score+=100; boom(s.x,s.y,'#ffcc00',15);
+      golden=true; goldenT=180;
+      sfxCollect();
+    }
+  }
+
+  // draw
+  drawBg();
+  scrolls.forEach(drawScroll);
+  obstacles.forEach(drawObs);
+  drawLobster();
+  particles.forEach(p=>{
+    ctx.globalAlpha=p.life/50; ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+  });
+
+  document.getElementById('score').textContent = '得分: ' + score;
+  requestAnimationFrame(loop);
+}
+
+function startGame() {
+  document.getElementById('startScreen').classList.add('hidden');
+  document.getElementById('gameOverScreen').classList.add('hidden');
+  score=0; speed=3; frame=0; bgOff=0; golden=false; goldenT=0;
+  lobster=newLobster(); obstacles=[]; scrolls=[]; particles=[]; running=true;
+  loop();
+}
+
+function doGameOver() {
+  running=false;
+  if (score>highScore) { highScore=score; localStorage.setItem('hs',highScore); }
+  const lv = score<200?'沉睡的虾米 🦐':score<500?'微微颤动 🦐':score<1000?'壳开始裂 💥':score<2000?'破壳而出 🔥':score<3500?'虾群领袖 👑':'觉醒龙虾 🐉';
+  document.getElementById('finalScore').textContent = '得分: '+score+' | 最高: '+highScore;
+  document.getElementById('awakenLevel').textContent = '觉醒等级: '+lv;
+  document.getElementById('gameOverScreen').classList.remove('hidden');
+}
+
+// 简单交互：点屏幕就跳
+canvas.addEventListener('touchstart', e => { e.preventDefault(); doJump(); }, {passive:false});
+canvas.addEventListener('mousedown', doJump);
+document.addEventListener('keydown', e => {
+  if (e.code==='Space'||e.code==='ArrowUp') { e.preventDefault(); doJump(); }
+});
+
+// init
+requestAnimationFrame(() => { drawBg(); });
+
+// ===== 🎵 音乐 & 音效系统 =====
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+let bgmPlaying = false;
+let bgmGain = null;
+let sfxGain = null;
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new AudioCtx();
+  bgmGain = audioCtx.createGain();
+  bgmGain.gain.value = 0.3;
+  bgmGain.connect(audioCtx.destination);
+  sfxGain = audioCtx.createGain();
+  sfxGain.gain.value = 0.5;
+  sfxGain.connect(audioCtx.destination);
+}
+
+// 复古合成器 BGM（循环播放）
+function playBGM() {
+  if (bgmPlaying) return;
+  bgmPlaying = true;
+  initAudio();
+
+  // 深海冒险风格旋律（A小调）
+  const melody = [
+    // 小节1
+    {f:220,d:0.25},{f:262,d:0.25},{f:330,d:0.25},{f:392,d:0.25},
+    // 小节2
+    {f:440,d:0.5},{f:392,d:0.25},{f:330,d:0.25},
+    // 小节3
+    {f:294,d:0.25},{f:330,d:0.25},{f:392,d:0.25},{f:440,d:0.25},
+    // 小节4
+    {f:523,d:0.5},{f:440,d:0.5},
+    // 小节5
+    {f:392,d:0.25},{f:330,d:0.25},{f:294,d:0.25},{f:262,d:0.25},
+    // 小节6
+    {f:220,d:0.5},{f:0,d:0.5},
+  ];
+
+  // 低音线
+  const bass = [
+    {f:110,d:1},{f:131,d:1},{f:147,d:1},{f:110,d:1},
+    {f:131,d:1},{f:110,d:1},
+  ];
+
+  function playNote(freq, time, dur, type='square', gain=bgmGain) {
+    if (freq === 0) return;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.15, time);
+    g.gain.exponentialRampToValueAtTime(0.01, time + dur - 0.02);
+    osc.connect(g);
+    g.connect(gain);
+    osc.start(time);
+    osc.stop(time + dur);
+  }
+
+  function scheduleLoop() {
+    if (!bgmPlaying) return;
+    const now = audioCtx.currentTime + 0.1;
+    let t = 0;
+
+    // 旋律
+    for (const n of melody) {
+      playNote(n.f, now + t, n.d * 0.9, 'square');
+      t += n.d;
+    }
+    const totalDur = t;
+
+    // 低音
+    t = 0;
+    for (const b of bass) {
+      playNote(b.f, now + t, b.d * 0.9, 'triangle', bgmGain);
+      t += b.d;
+    }
+
+    // 循环
+    setTimeout(scheduleLoop, (totalDur - 0.2) * 1000);
+  }
+
+  scheduleLoop();
+}
+
+// 音效：跳跃
+function sfxJump() {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(600, audioCtx.currentTime + 0.1);
+  g.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+  osc.connect(g); g.connect(sfxGain);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+}
+
+// 音效：收集卷轴
+function sfxCollect() {
+  if (!audioCtx) return;
+  const notes = [523, 659, 784, 1047];
+  notes.forEach((f, i) => {
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = f;
+    g.gain.setValueAtTime(0.2, audioCtx.currentTime + i*0.06);
+    g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + i*0.06 + 0.12);
+    osc.connect(g); g.connect(sfxGain);
+    osc.start(audioCtx.currentTime + i*0.06);
+    osc.stop(audioCtx.currentTime + i*0.06 + 0.12);
+  });
+}
+
+// 音效：死亡
+function sfxDie() {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.5);
+  g.gain.setValueAtTime(0.3, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+  osc.connect(g); g.connect(sfxGain);
+  osc.start(); osc.stop(audioCtx.currentTime + 0.5);
+}
+
+// 点击页面时启动音频（浏览器要求用户交互）
+document.addEventListener('click', () => { initAudio(); playBGM(); }, { once: true });
+document.addEventListener('touchstart', () => { initAudio(); playBGM(); }, { once: true });
+</script>
+</body>
+</html>
